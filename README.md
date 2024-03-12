@@ -1,1 +1,1 @@
-Simulation code for AICS 2023
+Simulation code for GameSec 2024
