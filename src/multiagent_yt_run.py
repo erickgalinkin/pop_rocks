@@ -1,4 +1,11 @@
+from typing import Union, Optional
+from logging import Logger, getLogger
+from uuid import uuid4
+import pathlib
+from datetime import datetime
+import os.path
 import numpy as np
+from pertdist import PERT
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -14,15 +21,8 @@ from yawning_titan.game_modes.game_mode_db import default_game_mode, GameModeDB
 from yawning_titan.networks.network import Network
 from yawning_titan.networks.network_db import default_18_node_network, NetworkDB
 
-from adaptive_red import AdaptiveRed
+from adaptive_red import AdaptiveRed, BayesHurwiczRed
 from multiagent_env import MultiAgentEnv
-
-from typing import Union, Optional
-from logging import Logger, getLogger
-from uuid import uuid4
-import pathlib
-from datetime import datetime
-import os.path
 
 _LOGGER = getLogger(__name__)
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
@@ -96,7 +96,6 @@ class ActorCritic(nn.Module):
         raise NotImplementedError
 
     def act(self, state):
-
         if self.has_continuous_action_space:
             action_mean = self.actor(state)
             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
@@ -185,7 +184,6 @@ class PPO:
         print("--------------------------------------------------------------------------------------------")
 
     def select_action(self, state):
-
         if self.has_continuous_action_space:
             with torch.no_grad():
                 state = torch.FloatTensor(state).to(DEVICE)
@@ -269,6 +267,72 @@ class PPO:
         self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
 
 
+class BayesHurwiczAgent(PPO):
+    def __init__(self, state_dim, action_dim, p_hat_path, p_bar_path, p_ubar_path,
+                 k_epochs=5, lr_actor=0.0003, lr_critic=0.001, gamma=0.99, eps_clip=0.2,
+                 has_continuous_action_space=False, action_std_init=0.6):
+        super().__init__(state_dim, action_dim, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
+                         has_continuous_action_space, action_std_init)
+        self.load(p_hat_path)
+        self.p_bar = ActorCritic.load_state_dict(torch.load(p_bar_path, map_location=lambda storage, loc: storage))
+        self.p_ubar = ActorCritic.load_state_dict(torch.load(p_ubar_path, map_location=lambda storage, loc: storage))
+        self.k = 0
+        self.gamma = 1
+        self.mu_hat = PERT(0, 0.5, 1).rvs().item()
+        self.phi_hat = PERT(0, 0.5, 1).rvs().item()
+        self.al_hats = list()
+
+    def select_action(self, state):
+        if self.has_continuous_action_space:
+            raise NotImplementedError()
+        else:
+            with torch.no_grad():
+                state = torch.FloatTensor(state).to(DEVICE)
+                hat_action_probs = self.policy_old.actor(state)
+                bar_action_probs = self.p_bar.actor(state)
+                ubar_action_probs = self.p_ubar.actor(state)
+
+                action_probs = self.bayes_hurwicz(hat_action_probs, bar_action_probs, ubar_action_probs)
+
+            dist = Categorical(action_probs)
+            action = dist.sample()
+            action_logprob = dist.log_prob(action)
+            state_val = self.critic(state)
+
+            self.buffer.states.append(state)
+            self.buffer.actions.append(action)
+            self.buffer.logprobs.append(action_logprob)
+            self.buffer.state_values.append(state_val)
+
+            return action.item()
+
+    def bayes_hurwicz(self, hat_action_probs, bar_action_probs, ubar_action_probs):
+        bhc = self.gamma * hat_action_probs + \
+              (1 - self.gamma) * ((1 - self.mu_hat) * bar_action_probs +
+                                  self.mu_hat * ubar_action_probs)
+        return bhc
+
+    def update_mu_gamma(self, blue_action, network_interface):
+        blue_action_target_node = blue_action[1]
+        if blue_action_target_node is None:
+            return
+        else:
+            blue_target_uuid = blue_action_target_node.uuid()
+            compromised_states = network_interface.get_all_node_compromised_states()
+            if compromised_states[blue_target_uuid] == 0:
+                return
+            else:
+                self.k += 1
+                num_alerts = self.mu_hat * self.phi_hat
+                self.al_hats.append(num_alerts)
+                al_hat = np.average(num_alerts)
+                var_al_hat = np.var(num_alerts)
+                alpha = (al_hat ** 2) * (((1 - al_hat) / var_al_hat) - (1 / al_hat))
+                beta = alpha * ((1 / al_hat) - 1)
+                self.gamma = self.gamma / self.k
+                self.mu_hat = np.random.beta(alpha, beta)
+
+
 class MultiAgentYTRun(YawningTitanRun):
 
     def __init__(self, network: Optional[Network] = None, game_mode: Optional[GameMode] = None,
@@ -342,7 +406,8 @@ class MultiAgentYTRun(YawningTitanRun):
         agent = PPO(obs_space, action_space)
         return agent
 
-    def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None):
+    def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None,
+              p_hat_path=None, p_bar_path=None, p_ubar_path=None):
         if not new and not blue_ppo_path and not red_ppo_path:
             msg = "Performing setup when new=False requires saved PPO .zip files"
             try:
@@ -387,10 +452,27 @@ class MultiAgentYTRun(YawningTitanRun):
         self.logger.debug(f"YT run  {self.uuid}: Instantiating agent")
         if new:
             self.blue_agent = self._get_new_ppo("blue")
-            self.red_agent = self._get_new_ppo("red")
+            if isinstance(self.red, BayesHurwiczRed):
+                if p_hat_path and p_bar_path and p_ubar_path:
+                    obs_space = self.env.observation_space.shape[0]
+                    action_space = len(self.red.action_dict)
+                    self.red_agent = BayesHurwiczAgent(state_dim=obs_space,
+                                                       action_dim=action_space,
+                                                       p_hat_path=p_hat_path,
+                                                       p_bar_path=p_bar_path,
+                                                       p_ubar_path=p_ubar_path
+                                                       )
+                else:
+                    msg = "Bayes-Hurwicz agent requires paths to pretrained networks"
+                    raise Exception(msg)
+            else:
+                self.red_agent = self._get_new_ppo("red")
         else:
             self.blue_agent = self._load_existing_ppo(blue_ppo_path)
-            self.red_agent = self._load_existing_ppo(red_ppo_path)
+            if isinstance(self.red, BayesHurwiczRed):
+                self.red_agent = BayesHurwiczAgent(p_hat_path=red_ppo_path)
+            else:
+                self.red_agent = self._load_existing_ppo(red_ppo_path)
         self.logger.debug(f"YT run  {self.uuid}: Agent instantiated")
 
     def train(self) -> Union[PPO, PPO, None]:
@@ -409,6 +491,8 @@ class MultiAgentYTRun(YawningTitanRun):
                 for t in range(1, self.total_timesteps):
                     red_action = self.red_agent.select_action(state)
                     blue_action = self.blue_agent.select_action(state)
+                    if isinstance(self.red_agent, BayesHurwiczAgent):
+                        self.red_agent.update_mu_gamma(blue_action, self.network_interface)
                     state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action)
                     self.red_agent.buffer.rewards.append(red_reward)
                     self.red_agent.buffer.is_terminals.append(done)
@@ -426,7 +510,6 @@ class MultiAgentYTRun(YawningTitanRun):
 
                 red_running_reward += red_ep_reward
                 blue_running_reward += blue_ep_reward
-
                 if i % 10 == 0:
                     self.red_agent.update()
                     self.blue_agent.update()

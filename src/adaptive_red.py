@@ -237,3 +237,8 @@ class AdaptiveRed(RedActionSet):
 
     def get_number_of_actions(self):
         return len(self.action_dict)
+
+
+class BayesHurwiczRed(AdaptiveRed):
+    def __init__(self, network_interface):
+        super().__init__(network_interface)

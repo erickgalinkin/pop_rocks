@@ -366,21 +366,21 @@ def multiagent_rewards(args: dict, security: float = 1, efficiency: float = 1) -
 
     # cost for actions
     blue_action_cost = {
-        "reduce_vulnerability": 0,
-        "restore_node": 1,
-        "make_node_safe": 0,
+        "reduce_vulnerability": 0.5,
+        "restore_node": 3,
+        "make_node_safe": 1,
         "scan": 0,
         "isolate": 10,
         "connect": 0,
         "do_nothing": -0.5,
-        "add_deceptive_node": 2,
+        "add_deceptive_node": 3,
     }
 
     red_action_cost = {
         "basic_attack": 1,
         "do_nothing": -0.5,
         "random_move": 0,
-        "zero_day": 3
+        "zero_day": 5
     }
 
     blue_reward = -blue_action_cost[blue_action]
