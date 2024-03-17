@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class LazyBlue(BlueActionSet):
     def __init__(self, network_interface: NetworkInterface):
-        super().__init__(self, network_interface)
+        super().__init__(network_interface)
 
     def perform_action(self, action: int) -> Tuple[str, Node]:
         """No matter what, do nothing."""
@@ -19,5 +19,5 @@ class LazyBlue(BlueActionSet):
         return blue_action, blue_node
 
     @staticmethod
-    def get_number_of_actions(self):
+    def get_number_of_actions():
         return 1
