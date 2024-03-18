@@ -293,13 +293,17 @@ class BayesHurwiczAgent(PPO):
                 hat_action_probs = self.policy_old.actor(state)
                 bar_action_probs = self.p_bar.actor(state)
                 ubar_action_probs = self.p_ubar.actor(state)
+                hat_state_val = self.policy_old.critic(state)
+                bar_state_val = self.p_bar.critic(state)
+                ubar_state_val = self.p_ubar.critic(state)
 
                 action_probs = self.bayes_hurwicz(hat_action_probs, bar_action_probs, ubar_action_probs)
+                state_val = self.get_state_val(hat_state_val, bar_state_val, ubar_state_val)
 
             dist = Categorical(action_probs)
             action = dist.sample()
             action_logprob = dist.log_prob(action)
-            state_val = self.critic(state)
+
 
             self.buffer.states.append(state)
             self.buffer.actions.append(action)
@@ -313,6 +317,11 @@ class BayesHurwiczAgent(PPO):
               (1 - self.gamma) * ((1 - self.mu_hat) * bar_action_probs +
                                   self.mu_hat * ubar_action_probs)
         return bhc
+
+    def get_state_val(self, hat_state_val, bar_state_val, ubar_state_val):
+        state_val = self.gamma * hat_state_val + \
+                    (1 - self.gamma) * ((1 - self.mu_hat) * bar_state_val + self.mu_hat * ubar_state_val)
+        return state_val
 
     def update_mu_gamma(self, blue_action, network_interface):
         blue_action_target_node = blue_action[1]
