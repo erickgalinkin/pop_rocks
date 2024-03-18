@@ -274,8 +274,10 @@ class BayesHurwiczAgent(PPO):
         super().__init__(state_dim, action_dim, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
                          has_continuous_action_space, action_std_init)
         self.load(p_hat_path)
-        self.p_bar = ActorCritic.load_state_dict(torch.load(p_bar_path, map_location=lambda storage, loc: storage))
-        self.p_ubar = ActorCritic.load_state_dict(torch.load(p_ubar_path, map_location=lambda storage, loc: storage))
+        self.p_bar = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
+        self.p_bar.load_state_dict(torch.load(p_bar_path, map_location=lambda storage, loc: storage))
+        self.p_ubar = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
+        self.p_ubar.load_state_dict(torch.load(p_ubar_path, map_location=lambda storage, loc: storage))
         self.k = 0
         self.gamma = 1
         self.mu_hat = PERT(0, 0.5, 1).rvs().item()
