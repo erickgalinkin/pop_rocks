@@ -4,6 +4,7 @@ from yawning_titan.envs.generic.helpers.eval_printout import EvalPrintout
 from yawning_titan.envs.generic.generic_env import GenericNetworkEnv
 
 from adaptive_red import AdaptiveRed
+from nsa_red import NSARed
 
 from gym import spaces
 import copy
@@ -37,7 +38,7 @@ class MultiAgentEnv(GenericNetworkEnv):
     metadata = {"render_modes": ["human"], "name": "yt_multiagent"}
 
     def __init__(self,
-                 red_agent: AdaptiveRed,
+                 red_agent: Union[AdaptiveRed, NSARed],
                  blue_agent: BlueInterface,
                  network_interface: NetworkInterface,
                  print_metrics: bool = True,
@@ -234,6 +235,15 @@ class MultiAgentEnv(GenericNetworkEnv):
             else:
                 self.current_game_blue[blue_action] = 1
 
+            # Special actions for NSARed, derived from YAWNING-TITAN nsa_node_def.py
+            # https://github.com/dstl/YAWNING-TITAN/blob/main/src/yawning_titan/envs/specific/nsa_node_def.py
+            if isinstance(self.RED, NSARed):
+                compromised_nodes = self.network_interface.current_graph.get_nodes(filter_true_compromised=True)
+                if blue_action in ["make_node_safe", "restore_node"] and blue_node in compromised_nodes:
+                    chance = np.random.rand()
+                    if chance <= self.RED.chance_to_spread_during_patch:
+                        self.RED.spread()
+
             # calculates the reward from the current state of the network
             reward_args = {
                 "network_interface": self.network_interface,
@@ -252,6 +262,12 @@ class MultiAgentEnv(GenericNetworkEnv):
             }
 
             red_reward, blue_reward = multiagent_rewards(reward_args)
+            # NSARed agent modifies the cost of actions
+            if isinstance(self.RED, NSARed):
+                if blue_action in ["make_node_safe", "restore_node"]:
+                    blue_reward = blue_reward - self.RED.cost_of_patch
+                if blue_action == "isolate":
+                    blue_reward = blue_reward - self.RED.cost_of_isolate
 
             # gets the current observation from the environment
             self.env_observation = (

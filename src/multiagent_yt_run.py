@@ -22,6 +22,7 @@ from yawning_titan.networks.network import Network
 from yawning_titan.networks.network_db import default_18_node_network, NetworkDB
 
 from adaptive_red import AdaptiveRed, BayesHurwiczRed
+from nsa_red import NSARed
 from multiagent_env import MultiAgentEnv
 
 _LOGGER = getLogger(__name__)
@@ -304,7 +305,6 @@ class BayesHurwiczAgent(PPO):
             action = dist.sample()
             action_logprob = dist.log_prob(action)
 
-
             self.buffer.states.append(state)
             self.buffer.actions.append(action)
             self.buffer.logprobs.append(action_logprob)
@@ -419,7 +419,14 @@ class MultiAgentYTRun(YawningTitanRun):
 
     def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None,
               p_hat_path=None, p_bar_path=None, p_ubar_path=None):
-        if not new and not blue_ppo_path and not red_ppo_path:
+        if not new and not blue_ppo_path:
+            msg = "Performing setup when new=False requires saved PPO .zip files"
+            try:
+                raise AttributeError(msg)
+            except AttributeError as e:
+                _LOGGER.critical(e)
+                raise e
+        if not new and isinstance(self.red, AdaptiveRed) and not red_ppo_path:
             msg = "Performing setup when new=False requires saved PPO .zip files"
             try:
                 raise AttributeError(msg)
@@ -474,14 +481,20 @@ class MultiAgentYTRun(YawningTitanRun):
                                                        p_ubar_path=p_ubar_path
                                                        )
                 else:
-                    msg = "Bayes-Hurwicz agent requires paths to pretrained networks"
+                    msg = "Bayes-Hurwicz agent requires paths to all three pretrained networks."
                     raise Exception(msg)
+            elif isinstance(self.red, NSARed):
+                self.red_agent = self.red
             else:
                 self.red_agent = self._get_new_ppo("red")
         else:
-            self.blue_agent = self._load_existing_ppo(blue_ppo_path)
             if isinstance(self.red, BayesHurwiczRed):
-                self.red_agent = BayesHurwiczAgent(p_hat_path=red_ppo_path)
+                msg = "Bayes-Hurwicz agents require pretrained networks to operate."
+                raise Exception(msg)
+
+            self.blue_agent = self._load_existing_ppo(blue_ppo_path)
+            if isinstance(self.red, NSARed):
+                self.red_agent = self.red
             else:
                 self.red_agent = self._load_existing_ppo(red_ppo_path)
         self.logger.debug(f"YT run  {self.uuid}: Agent instantiated")
