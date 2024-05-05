@@ -192,7 +192,7 @@ class MultiAgentEnv(GenericNetworkEnv):
             if percent_comp >= self.network_interface.game_mode.game_rules.blue_loss_condition.n_percent_nodes_lost.value.value:
                 done = True
                 blue_reward = self.network_interface.game_mode.rewards.for_loss.value
-                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
+                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value / 2
                 # If the game ends before blue has had their turn the blue action is set to failed
                 blue_action = "failed"
         if self.network_interface.game_mode.game_rules.blue_loss_condition.high_value_node_lost.value:
@@ -207,7 +207,7 @@ class MultiAgentEnv(GenericNetworkEnv):
                 # If this mode is selected then the game ends if the high value node has been compromised
                 done = True
                 blue_reward = self.network_interface.game_mode.rewards.for_loss.value
-                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
+                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value / 2
                 blue_action = "failed"
 
         # if self.network_interface.gr_loss_tn:
@@ -217,13 +217,12 @@ class MultiAgentEnv(GenericNetworkEnv):
                 # If this mode is selected then the game ends if the target node has been compromised
                 done = True
                 blue_reward = self.network_interface.game_mode.rewards.for_loss.value
-                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
+                red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value / 2
                 blue_action = "failed"
 
         if done:
             if self.network_interface.game_mode.rewards.reduce_negative_rewards_for_closer_fails.value:
                 blue_reward = blue_reward * (1 - (self.current_duration / self.network_interface.game_mode.game_rules.max_steps.value))
-                red_reward = red_reward * self.network_interface.game_mode.game_rules.max_steps.value / self.current_duration
         if not done:
             blue_action, blue_node = self.BLUE.perform_action(blue_action_id)
 
@@ -262,12 +261,8 @@ class MultiAgentEnv(GenericNetworkEnv):
 
             # if the total number of steps reaches the set end then the blue agent wins and is rewarded accordingly
             if self.current_duration == self.network_interface.game_mode.game_rules.max_steps.value:
-                if self.network_interface.game_mode.rewards.end_rewards_are_multiplied_by_end_state.value:
-                    blue_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value * (len(self.network_interface.current_graph.get_nodes(filter_true_safe=True)) / self.network_interface.current_graph.number_of_nodes())
-                    red_reward = self.network_interface.game_mode.rewards.for_loss.value * (len(self.network_interface.current_graph.get_nodes(filter_true_safe=True)) / self.network_interface.current_graph.number_of_nodes())
-                else:
-                    blue_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
-                    red_reward = self.network_interface.game_mode.rewards.for_loss.value
+                blue_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
+                red_reward = self.network_interface.game_mode.rewards.for_loss.value
                 done = True
 
         # Gets the state of the environment at the end of the current time step
@@ -366,20 +361,20 @@ def multiagent_rewards(args: dict, security: float = 1, efficiency: float = 1) -
 
     # cost for actions
     blue_action_cost = {
-        "reduce_vulnerability": 0.5,
-        "restore_node": 3,
-        "make_node_safe": 1,
-        "scan": 0,
+        "reduce_vulnerability": 2,
+        "restore_node": 5,
+        "make_node_safe": 3,
+        "scan": 1,
         "isolate": 10,
-        "connect": 0,
-        "do_nothing": -0.5,
+        "connect": 1,
+        "do_nothing": 0.5,
         "add_deceptive_node": 3,
     }
 
     red_action_cost = {
-        "basic_attack": 1,
-        "do_nothing": -0.5,
-        "random_move": 0,
+        "basic_attack": 1.5,
+        "do_nothing": 0.5,
+        "random_move": 0.5,
         "zero_day": 5
     }
 

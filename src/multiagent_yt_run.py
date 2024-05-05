@@ -5,7 +5,7 @@ import pathlib
 from datetime import datetime
 import os.path
 import numpy as np
-from pertdist import PERT
+from pert import PERT
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -133,7 +133,7 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    def __init__(self, state_dim, action_dim, k_epochs=5, lr_actor=0.0003, lr_critic=0.001, gamma=0.99, eps_clip=0.2,
+    def __init__(self, state_dim, action_dim, k_epochs=5, lr_actor=0.0002, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
                  has_continuous_action_space=False, action_std_init=0.6):
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -269,7 +269,7 @@ class PPO:
 
 class BayesHurwiczAgent(PPO):
     def __init__(self, state_dim, action_dim, p_hat_path, p_bar_path, p_ubar_path,
-                 k_epochs=5, lr_actor=0.0003, lr_critic=0.001, gamma=0.99, eps_clip=0.2,
+                 k_epochs=5, lr_actor=0.0002, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
                  has_continuous_action_space=False, action_std_init=0.6):
         super().__init__(state_dim, action_dim, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
                          has_continuous_action_space, action_std_init)
@@ -281,7 +281,7 @@ class BayesHurwiczAgent(PPO):
         self.k = 0
         self.gamma = 1
         self.mu_hat = PERT(0, 0.5, 1).rvs().item()
-        self.phi_hat = PERT(0, 0.5, 1).rvs().item()
+        self.phi_hat = PERT(0.2, 0.5, 0.8).rvs().item()
         self.al_hats = list()
 
     def select_action(self, state):
@@ -349,7 +349,7 @@ class MultiAgentYTRun(YawningTitanRun):
     def __init__(self, network: Optional[Network] = None, game_mode: Optional[GameMode] = None,
                  red_agent_class: object = AdaptiveRed, blue_agent_class: object = BlueInterface,
                  print_metrics: bool = False, show_metrics_every: int = 1, collect_additional_per_ts_data: bool = False,
-                 eval_freq: int = 10, total_timesteps: int = 20000, training_runs: int = 1000,
+                 eval_freq: int = 10, total_timesteps: int = 5000, training_runs: int = 1000,
                  n_eval_episodes: int = 1, deterministic: bool = False, warn: bool = True, render: bool = False,
                  verbose: int = 1, logger: Optional[Logger] = None, output_dir: Optional[str] = None, auto: bool = True,
                  **kwargs: object) -> object:
