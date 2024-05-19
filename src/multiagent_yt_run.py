@@ -28,7 +28,7 @@ from multiagent_env import MultiAgentEnv
 _LOGGER = getLogger(__name__)
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
 WRITER = SummaryWriter(log_dir=PPO_TENSORBOARD_LOGS_DIR)
-
+SUPPORTED_TYPES = ["Ransomware", "APT"]
 
 class RolloutBuffer:
     def __init__(self):
@@ -134,13 +134,15 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    def __init__(self, state_dim, action_dim, k_epochs=5, lr_actor=0.0002, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
-                 has_continuous_action_space=False, action_std_init=0.6):
+    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=5, lr_actor=0.0002, lr_critic=0.0005,
+                 gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
         self.has_continuous_action_space = has_continuous_action_space
 
         if has_continuous_action_space:
             self.action_std = action_std_init
 
+        assert attacker_type in SUPPORTED_TYPES, f"Specified attacker type is not supported. Choose from {SUPPORTED_TYPES}"
+        self.type = attacker_type
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.k_epochs = k_epochs
@@ -269,10 +271,10 @@ class PPO:
 
 
 class BayesHurwiczAgent(PPO):
-    def __init__(self, state_dim, action_dim, p_hat_path, p_bar_path, p_ubar_path,
+    def __init__(self, state_dim, action_dim, p_hat_path, p_bar_path, p_ubar_path, attacker_type,
                  k_epochs=5, lr_actor=0.0002, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
                  has_continuous_action_space=False, action_std_init=0.6):
-        super().__init__(state_dim, action_dim, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
+        super().__init__(state_dim, action_dim, attacker_type, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
                          has_continuous_action_space, action_std_init)
         self.load(p_hat_path)
         self.p_bar = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
@@ -408,16 +410,16 @@ class MultiAgentYTRun(YawningTitanRun):
             self.evaluate()
             self.save()
 
-    def _get_new_ppo(self, agent_type: str) -> PPO:
+    def _get_new_ppo(self, agent_type: str, attacker_type: str = "Ransomware") -> PPO:
         obs_space = self.env.observation_space.shape[0]
         if agent_type == "red":
             action_space = len(self.red.action_dict)
         else:
             action_space = self.env.action_space.n
-        agent = PPO(obs_space, action_space)
+        agent = PPO(obs_space, action_space, attacker_type)
         return agent
 
-    def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None,
+    def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None, red_agent_type="Ransomware",
               p_hat_path=None, p_bar_path=None, p_ubar_path=None):
         if not new and not blue_ppo_path:
             msg = "Performing setup when new=False requires saved PPO .zip files"
@@ -561,6 +563,105 @@ class MultiAgentYTRun(YawningTitanRun):
                 f"Call .setup() on the instance of {self.__class__.__name__} to setup the run."
             )
 
+    def multi_type_setup(self, new=True):
+        if self.output_dir:
+            if isinstance(self.output_dir, str):
+                self.output_dir = pathlib.Path(self.output_dir)
+        else:
+            self.output_dir = pathlib.Path(
+                os.path.join(
+                    AGENTS_DIR, "trained", str(datetime.now().date()), f"{self.uuid}"
+                )
+            )
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.network_interface = NetworkInterface(game_mode=self.game_mode, network=self.network)
+        self.logger.debug(f"YT run  {self.uuid}: Network interface created")
+
+        self.red = self._red_agent_class(self.network_interface)
+        self.logger.debug(f"YT run  {self.uuid}: Red agent created")
+
+        self.blue = self._blue_agent_class(self.network_interface)
+        self.logger.debug(f"YT run  {self.uuid}: Blue agent created")
+
+        self.env = MultiAgentEnv(red_agent=self.red,
+                                 blue_agent=self.blue,
+                                 network_interface=self.network_interface,
+                                 print_metrics=self.print_metrics,
+                                 show_metrics_every=self.show_metrics_every,
+                                 collect_additional_per_ts_data=self.collect_additional_per_ts_data)
+
+        self.logger.debug(f"YT run  {self.uuid}: MultiAgentEnv created")
+
+        self.logger.debug(f"YT run  {self.uuid}: Env checking complete")
+
+        self.env.reset()
+        self.logger.debug(f"YT run  {self.uuid}: GenericNetworkEnv reset")
+        self.logger.debug(f"YT run  {self.uuid}: Instantiating agent")
+        self.blue_agent = self._get_new_ppo("blue")
+        self.red_rw_agent = self._get_new_ppo("red", "Ransomware")
+        self.red_apt_agent = self._get_new_ppo("red", "APT")
+        self.logger.debug(f"YT run  {self.uuid}: Agent instantiated")
+
+    def multi_type_train(self) -> Union[PPO, PPO, PPO, None]:
+        if self.env and self.blue_agent and self.red_rw_agent and self.red_apt_agent:
+            self.logger.debug(f"YT run  {self.uuid}: Performing agent training")
+            blue_rewards = list()
+            apt_rewards = list()
+            rw_rewards = list()
+            episode_lengths = list()
+            for i in range(self.training_runs):
+                active_attacker = np.random.choice([self.red_rw_agent, self.red_apt_agent])
+                state = self.env.reset()
+                self.logger.debug(f"YT run  {self.uuid}: MultiAgentEnv reset")
+                red_ep_reward = 0
+                blue_ep_reward = 0
+                global ep_length
+                ep_length = 0
+                for t in range(1, self.total_timesteps):
+                    red_action = active_attacker.select_action(state)
+                    blue_action = self.blue_agent.select_action(state)
+                    state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action)
+                    active_attacker.buffer.rewards.append(red_reward)
+                    active_attacker.buffer.is_terminals.append(done)
+                    self.blue_agent.buffer.rewards.append(blue_reward)
+                    self.blue_agent.buffer.is_terminals.append(done)
+                    red_ep_reward += red_reward
+                    blue_ep_reward += blue_reward
+                    if done:
+                        blue_rewards.append(blue_ep_reward)
+                        if active_attacker.type == "Ransomware":
+                            rw_rewards.append(red_ep_reward)
+                        else:
+                            apt_rewards.append(red_ep_reward)
+                        WRITER.add_scalar("Blue Episode Reward", blue_ep_reward, i)
+                        WRITER.add_scalar("Episode Length", t, i)
+                        ep_length = t
+                        episode_lengths.append(ep_length)
+                        break
+                if i % 16 == 0:
+                    self.red_rw_agent.update()
+                    self.red_apt_agent.update()
+                    self.blue_agent.update()
+
+                print(f'Episode: {i} \t Episode Length:{ep_length} \t'
+                      f'Red Reward: {red_ep_reward:.2f} \t Blue Reward {blue_ep_reward:.2f}\t')
+                self.logger.debug(f"YT run  {self.uuid}: Episode {i + 1} complete")
+
+            rw_avg_reward = np.average(rw_rewards)
+            apt_avg_reward = np.average(apt_rewards)
+            blue_avg_reward = np.average(blue_rewards)
+            print(f"Training complete!\n"
+                  f"Average ransomware reward: {rw_avg_reward:.2f} \t Average APT reward: {apt_avg_reward:.2f} \t "
+                  f"Average blue reward: {blue_avg_reward:.2f}")
+            self.logger.debug(f"YT run  {self.uuid}: Agent training complete")
+            return self.red_rw_agent, self.red_apt_agent, self.blue_agent
+        else:
+            self.logger.error(
+                f"Cannot train the agent for YT run  {self.uuid} as the run has not been setup. "
+                f"Call .setup() on the instance of {self.__class__.__name__} to setup the run."
+            )
+
     def save(self) -> Union[str, None]:
         save_path = "./saved_models"
         if not os.path.exists(save_path):
@@ -574,6 +675,22 @@ class MultiAgentYTRun(YawningTitanRun):
         red_path = f"{model_path}/red.pth"
         self.blue_agent.save(blue_path)
         self.red_agent.save(red_path)
+
+    def multi_type_save(self) -> Union[str, None]:
+        save_path = "./saved_models"
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
+        model_path = f"{save_path}/multi_type/{self.uuid}"
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+
+        blue_path = f"{model_path}/blue.pth"
+        apt_path = f"{model_path}/apt.pth"
+        rw_path = f"{model_path}/ransomware.pth"
+        self.blue_agent.save(blue_path)
+        self.red_apt_agent.save(apt_path)
+        self.red_rw_agent.save(rw_path)
 
 
 if __name__ == "__main__":

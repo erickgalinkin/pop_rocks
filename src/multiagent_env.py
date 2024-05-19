@@ -180,13 +180,15 @@ class MultiAgentEnv(GenericNetworkEnv):
             notes["post_red_red_location"] = copy.deepcopy(self.network_interface.red_current_location)
 
         # Check if the game is over and red has won
-        if self.network_interface.game_mode.game_rules.blue_loss_condition.all_nodes_lost.value:
+        if self.network_interface.game_mode.game_rules.blue_loss_condition.all_nodes_lost.value \
+                and self.RED.type == "ransomware":
             if number_uncompromised == 0:
                 done = True
                 blue_reward = self.network_interface.game_mode.rewards.for_loss.value
                 red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
                 blue_action = "failed"
-        if self.network_interface.game_mode.game_rules.blue_loss_condition.n_percent_nodes_lost.use.value:
+        if self.network_interface.game_mode.game_rules.blue_loss_condition.n_percent_nodes_lost.use.value \
+                and self.RED.type == "ransomware":
             # calculate the number of safe nodes
             percent_comp = len(self.network_interface.current_graph.get_nodes(filter_true_compromised=True)) / \
                            self.network_interface.current_graph.number_of_nodes()
@@ -196,7 +198,8 @@ class MultiAgentEnv(GenericNetworkEnv):
                 red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value / 2
                 # If the game ends before blue has had their turn the blue action is set to failed
                 blue_action = "failed"
-        if self.network_interface.game_mode.game_rules.blue_loss_condition.high_value_node_lost.value:
+        if self.network_interface.game_mode.game_rules.blue_loss_condition.high_value_node_lost.value and \
+                self.RED.type == "APT":
             # check if a high value node was compromised
             compromised_hvn = False
             for hvn in self.network_interface.current_graph.high_value_nodes:
@@ -213,7 +216,8 @@ class MultiAgentEnv(GenericNetworkEnv):
 
         # if self.network_interface.gr_loss_tn:
         tn = self.network_interface.get_target_node()
-        if tn is not None and self.network_interface.game_mode.game_rules.blue_loss_condition.target_node_lost.value:
+        if tn is not None and self.network_interface.game_mode.game_rules.blue_loss_condition.target_node_lost.value \
+                and self.RED.type == "APT":
             if tn.true_compromised_status == 1:
                 # If this mode is selected then the game ends if the target node has been compromised
                 done = True
