@@ -108,7 +108,7 @@ class MultiAgentEnv(GenericNetworkEnv):
 
         return self.env_observation
 
-    def step(self, red_action_id: int, blue_action_id: int) -> Tuple[np.array, float, float, bool, Dict[str, dict]]:
+    def step(self, red_action_id: int, blue_action_id: int, red_type:str) -> Tuple[np.array, float, float, bool, Dict[str, dict]]:
         """
         Take a time step and executes the actions for both Blue and Red RL agents.
 
@@ -181,14 +181,14 @@ class MultiAgentEnv(GenericNetworkEnv):
 
         # Check if the game is over and red has won
         if self.network_interface.game_mode.game_rules.blue_loss_condition.all_nodes_lost.value \
-                and self.RED.type == "ransomware":
+                and red_type == "Ransomware":
             if number_uncompromised == 0:
                 done = True
                 blue_reward = self.network_interface.game_mode.rewards.for_loss.value
                 red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value
                 blue_action = "failed"
         if self.network_interface.game_mode.game_rules.blue_loss_condition.n_percent_nodes_lost.use.value \
-                and self.RED.type == "ransomware":
+                and red_type == "Ransomware":
             # calculate the number of safe nodes
             percent_comp = len(self.network_interface.current_graph.get_nodes(filter_true_compromised=True)) / \
                            self.network_interface.current_graph.number_of_nodes()
@@ -198,8 +198,7 @@ class MultiAgentEnv(GenericNetworkEnv):
                 red_reward = self.network_interface.game_mode.rewards.for_reaching_max_steps.value / 2
                 # If the game ends before blue has had their turn the blue action is set to failed
                 blue_action = "failed"
-        if self.network_interface.game_mode.game_rules.blue_loss_condition.high_value_node_lost.value and \
-                self.RED.type == "APT":
+        if self.network_interface.game_mode.game_rules.blue_loss_condition.high_value_node_lost.value and red_type == "APT":
             # check if a high value node was compromised
             compromised_hvn = False
             for hvn in self.network_interface.current_graph.high_value_nodes:
@@ -217,7 +216,7 @@ class MultiAgentEnv(GenericNetworkEnv):
         # if self.network_interface.gr_loss_tn:
         tn = self.network_interface.get_target_node()
         if tn is not None and self.network_interface.game_mode.game_rules.blue_loss_condition.target_node_lost.value \
-                and self.RED.type == "APT":
+                and red_type == "APT":
             if tn.true_compromised_status == 1:
                 # If this mode is selected then the game ends if the target node has been compromised
                 done = True
@@ -241,12 +240,12 @@ class MultiAgentEnv(GenericNetworkEnv):
 
             # Special actions for NSARed, derived from YAWNING-TITAN nsa_node_def.py
             # https://github.com/dstl/YAWNING-TITAN/blob/main/src/yawning_titan/envs/specific/nsa_node_def.py
-            if isinstance(self.RED, NSARed):
-                compromised_nodes = self.network_interface.current_graph.get_nodes(filter_true_compromised=True)
-                if blue_action in ["make_node_safe", "restore_node"] and blue_node in compromised_nodes:
-                    chance = np.random.rand()
-                    if chance <= self.RED.chance_to_spread_during_patch:
-                        self.RED.spread()
+#             if isinstance(self.RED, NSARed):
+#                 compromised_nodes = self.network_interface.current_graph.get_nodes(filter_true_compromised=True)
+#                 if blue_action in ["make_node_safe", "restore_node"] and blue_node in compromised_nodes:
+#                     chance = np.random.rand()
+#                     if chance <= self.RED.chance_to_spread_during_patch:
+#                         self.RED.spread()
 
             # calculates the reward from the current state of the network
             reward_args = {
@@ -267,11 +266,11 @@ class MultiAgentEnv(GenericNetworkEnv):
 
             red_reward, blue_reward = multiagent_rewards(reward_args)
             # NSARed agent modifies the cost of actions
-            if isinstance(self.RED, NSARed):
-                if blue_action in ["make_node_safe", "restore_node"]:
-                    blue_reward = blue_reward - self.RED.cost_of_patch
-                if blue_action == "isolate":
-                    blue_reward = blue_reward - self.RED.cost_of_isolate
+#             if isinstance(self.RED, NSARed):
+#                 if blue_action in ["make_node_safe", "restore_node"]:
+#                     blue_reward = blue_reward - self.RED.cost_of_patch
+#                 if blue_action == "isolate":
+#                     blue_reward = blue_reward - self.RED.cost_of_isolate
 
             # gets the current observation from the environment
             self.env_observation = (
@@ -381,21 +380,23 @@ def multiagent_rewards(args: dict, security: float = 1, efficiency: float = 1) -
 
     # cost for actions
     blue_action_cost = {
-        "reduce_vulnerability": 2,
-        "restore_node": 5,
-        "make_node_safe": 3,
-        "scan": 1,
-        "isolate": 10,
-        "connect": 1,
-        "do_nothing": 0.5,
+        "reduce_vulnerability": 1.5,
+        "restore_node": 3,
+        "make_node_safe": 2,
+        "scan": 0.5,
+        "isolate": 5,
+        "connect": 0.5,
+        "do_nothing": 0,
         "add_deceptive_node": 3,
     }
 
     red_action_cost = {
-        "basic_attack": 1.5,
-        "do_nothing": 0.5,
+        "basic_attack": 2,
+        "do_nothing": 0,
         "random_move": 0.5,
-        "zero_day": 5
+        "zero_day": 6,
+        "spread": 10,
+        "intrude": 10,
     }
 
     blue_reward = -blue_action_cost[blue_action]

@@ -231,7 +231,12 @@ class AdaptiveRed(RedActionSet):
         all_attacking = attacking_node
         all_target = target_node
         all_success = [success]
-        self.network_interface.update_stored_attacks(all_attacking, all_target, all_success)
+        try:
+            self.network_interface.update_stored_attacks(all_attacking, all_target, all_success)
+            
+        except Exception as e:
+            print(all_attacking, all_target, all_success, action_info)
+            pass
 
         return red_action, target_node
 

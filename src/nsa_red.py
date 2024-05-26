@@ -1,12 +1,10 @@
-import logging
 import random
 import numpy as np
 from typing import Dict, List, Set, Tuple, Union
+
 from yawning_titan.envs.generic.core.network_interface import NetworkInterface
 from yawning_titan.envs.generic.core.red_action_set import RedActionSet
 from yawning_titan.networks.node import Node
-
-logger = logging.getLogger(__name__)
 
 
 class NSARed(RedActionSet):
@@ -24,13 +22,12 @@ class NSARed(RedActionSet):
         self.network_interface = network_interface
         # Derived from nsa_node def. See YAWNING-TITAN github:
         # https://github.com/dstl/YAWNING-TITAN/blob/main/src/yawning_titan/envs/specific/nsa_node_def.py#L107
-        self.skill: float = 1.0
+        self.skill: float = 0.8
         self.chance_to_spread_during_patch: float = 0.01
-        self.chance_to_randomly_compromise: float = 0.15
-        self.spread_vs_random_intrusion: float = 0.5
+        self.chance_to_randomly_compromise: float = 0.05
         self.cost_of_isolate: float = 10
         self.cost_of_patch: float = 5
-        self.chance_to_spread: float = 0.01
+        self.chance_to_spread: float = 0.05
         action_set, action_probabilities, action_dict = self._get_action_dict()
         self.action_dict = action_dict
         super().__init__(network_interface, action_set, action_probabilities)
@@ -43,19 +40,19 @@ class NSARed(RedActionSet):
         # Assign actions, probabilities derived from NodeEnv
         action_dict[action_number] = self.spread
         action_set.append(action_number)
-        action_probabilities.append(self.spread_vs_random_intrusion)
+        action_probabilities.append(0.1)
         action_number += 1
         action_dict[action_number] = self.intrude
         action_set.append(action_number)
-        action_probabilities.append(1 - self.spread_vs_random_intrusion)
+        action_probabilities.append(0.1)
         action_number += 1
         action_dict[action_number] = self.basic_attack
         action_set.append(action_number)
-        action_probabilities.append(0.1)
+        action_probabilities.append(0.4)
         action_number += 1
         action_dict[action_number] = self.zero_day_attack
         action_set.append(action_number)
-        action_probabilities.append(0.1)
+        action_probabilities.append(0.4)
 
         # Normalize action_probabilities
         action_probabilities = [float(prob)/sum(action_probabilities) for prob in action_probabilities]
@@ -185,26 +182,10 @@ class NSARed(RedActionSet):
                 "Successes": [False],
             }
 
-    def move(self, target: int, args: Tuple[List[List[float]], int, int, bool]):
-        """
-        Move the red agent from one node to another.
-
-        Args:
-            target: the node the agent is moving to
-            args: A tuple containing the following:
-                * "red_current_node": the current node of the agent
-                * "able_to_move": if the agent is able to move
-        """
-        [_, red_current_node, _, able_to_move] = args
-        if able_to_move:
-            logger.debug(f"Red Team: Moved to target {target + 1}")
-            self.update_location(target, red_current_node)
-
     def spread(self) -> Dict[str, List[Union[bool, str, None]]]:
         """
         Attempt to spread to all nodes connected to a compromised node.
         """
-        chance_to_spread = self.chance_to_spread
         nodes = list()
         attacking_nodes = list()
         success = list()
@@ -214,9 +195,7 @@ class NSARed(RedActionSet):
             if node is None:
                 # If red does not control any nodes then the entry nodes are used
                 connected_nodes = self.network_interface.current_graph.entry_nodes
-                connected_nodes = [
-                    n for n in connected_nodes if n.true_compromised_status == 0
-                ]
+                connected_nodes = [n for n in connected_nodes if n.true_compromised_status == 0]
                 attacking_nodes.extend([None] * len(connected_nodes))
             else:
                 connected_nodes = self.network_interface.get_current_connected_nodes(node)
@@ -224,15 +203,13 @@ class NSARed(RedActionSet):
                 attacking_nodes.extend([node] * len(connected_nodes))
             for connected_node in connected_nodes:
                 chance = random.random()
-                if chance <= chance_to_spread:
+                if chance <= self.chance_to_spread:
                     attack_status = self.network_interface.attack_node(
                         connected_node,
-                        skill=self.network_interface.game_mode.red.action_set.spread.chance.value,
+                        skill=self.skill,
                         use_skill=True,
-                        use_vulnerability=(
-                            not self.network_interface.game_mode.red.agent_attack.ignores_defences.value
-                        ),
-                        guarantee=self.network_interface.game_mode.red.agent_attack.always_succeeds.value,
+                        use_vulnerability=True,
+                        guarantee=False,
                     )
                     if attack_status:
                         # If the attack succeeds
@@ -263,7 +240,6 @@ class NSARed(RedActionSet):
             A list of the target nodes
             A list of the attacking nodes
         """
-        chance_to_randomly_compromise = self.chance_to_randomly_compromise
         safe_nodes = self.network_interface.current_graph.get_nodes(
             filter_true_safe=True
         )
@@ -272,18 +248,22 @@ class NSARed(RedActionSet):
         attacking_nodes = []
         # tries to attack the safe nodes
         for node in safe_nodes:
-            attack_status = self.network_interface.attack_node(
-                node,
-                skill=chance_to_randomly_compromise,
-                use_skill=True,
-            )
-            nodes.append(node)
-            if attack_status:
-                # Agent remembers each of the successes or failures for each attempt
-                success.append(True)
-            else:
-                success.append(False)
-            attacking_nodes.append(None)
+            chance = random.random()
+            if chance <= self.chance_to_randomly_compromise:
+                attack_status = self.network_interface.attack_node(
+                    node,
+                    skill=self.skill,
+                    use_skill=True,
+                    use_vulnerability=True,
+                    guarantee=False,
+                )
+                nodes.append(node)
+                if attack_status:
+                    # Agent remembers each of the successes or failures for each attempt
+                    success.append(True)
+                else:
+                    success.append(False)
+                attacking_nodes.append(None)
         return {
             "Action": "intrude",
             "Attacking_Nodes": attacking_nodes,
@@ -306,7 +286,7 @@ class NSARed(RedActionSet):
         if self.network_interface.game_mode.red.action_set.zero_day.use.value:
             self.increment_day()
 
-        if action >= self.get_number_of_actions():
+        if action > self.get_number_of_actions():
             action_info = self.do_nothing()
             red_action = action_info["Action"]
             target_node = action_info["Target_Nodes"]

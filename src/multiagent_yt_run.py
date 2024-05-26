@@ -38,6 +38,9 @@ class RolloutBuffer:
         self.rewards = []
         self.state_values = []
         self.is_terminals = []
+        
+    def __len__(self):
+        return len(self.rewards)
 
     def clear(self):
         del self.actions[:]
@@ -134,7 +137,7 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=5, lr_actor=0.0002, lr_critic=0.0005,
+    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=3, lr_actor=0.0001, lr_critic=0.0003,
                  gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -519,7 +522,7 @@ class MultiAgentYTRun(YawningTitanRun):
                     blue_action = self.blue_agent.select_action(state)
                     if isinstance(self.red_agent, BayesHurwiczAgent):
                         self.red_agent.update_mu_gamma(blue_action, self.network_interface)
-                    state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action)
+                    state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action, self.red_agent.type)
                     self.red_agent.buffer.rewards.append(red_reward)
                     self.red_agent.buffer.is_terminals.append(done)
                     self.blue_agent.buffer.rewards.append(blue_reward)
@@ -536,13 +539,13 @@ class MultiAgentYTRun(YawningTitanRun):
 
                 red_running_reward += red_ep_reward
                 blue_running_reward += blue_ep_reward
-                if i % 10 == 0:
+                if i % 64 == 0:
                     self.red_agent.update()
                     self.blue_agent.update()
 
-                print(f'Episode: {i} \t Episode Length:{ep_length} \t'
+                print(f'Episode: {i+1} \t Episode Length:{ep_length} \t'
                       f'Red Reward: {red_ep_reward:.2f} \t Blue Reward {blue_ep_reward:.2f}\t')
-                if i != 0 and i % 50 == 0:
+                if i != 0 and i % 100 == 0:
                     red_avg_reward = red_running_reward / i
                     blue_avg_reward = blue_running_reward / i
                     avg_ep_length = np.average(episode_lengths)
@@ -621,7 +624,7 @@ class MultiAgentYTRun(YawningTitanRun):
                 for t in range(1, self.total_timesteps):
                     red_action = active_attacker.select_action(state)
                     blue_action = self.blue_agent.select_action(state)
-                    state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action)
+                    state, red_reward, blue_reward, done, notes = self.env.step(red_action, blue_action, active_attacker.type)
                     active_attacker.buffer.rewards.append(red_reward)
                     active_attacker.buffer.is_terminals.append(done)
                     self.blue_agent.buffer.rewards.append(blue_reward)
@@ -632,21 +635,35 @@ class MultiAgentYTRun(YawningTitanRun):
                         blue_rewards.append(blue_ep_reward)
                         if active_attacker.type == "Ransomware":
                             rw_rewards.append(red_ep_reward)
+                            WRITER.add_scalar("Ransomware Reward", red_ep_reward, i)
                         else:
+                            WRITER.add_scalar("APT Reward", red_ep_reward, i)
                             apt_rewards.append(red_ep_reward)
                         WRITER.add_scalar("Blue Episode Reward", blue_ep_reward, i)
                         WRITER.add_scalar("Episode Length", t, i)
                         ep_length = t
                         episode_lengths.append(ep_length)
                         break
-                if i % 16 == 0:
-                    self.red_rw_agent.update()
-                    self.red_apt_agent.update()
+                if i > 0 and i % 64 == 0:
+                    if len(self.red_rw_agent.buffer) > 7:
+                        self.red_rw_agent.update()
+                    if len(self.red_apt_agent.buffer) > 7:
+                        self.red_apt_agent.update()
                     self.blue_agent.update()
 
-                print(f'Episode: {i} \t Episode Length:{ep_length} \t'
-                      f'Red Reward: {red_ep_reward:.2f} \t Blue Reward {blue_ep_reward:.2f}\t')
-                self.logger.debug(f"YT run  {self.uuid}: Episode {i + 1} complete")
+#                 print(f'Episode: {i} \t Episode Length:{ep_length} \t'
+#                       f'Red Reward: {red_ep_reward:.2f} \t Blue Reward {blue_ep_reward:.2f}\t')
+                if i > 0 and i % 50 == 0:
+                    rw_avg_reward = np.average(rw_rewards)
+                    rw_wins = np.sum([1 if x > 0 else 0 for x in rw_rewards])
+                    apt_avg_reward = np.average(apt_rewards)
+                    apt_wins = np.sum([1 if x > 0 else 0 for x in apt_rewards])
+                    blue_avg_reward = np.average(blue_rewards)
+                    print(f"Stats as of episode {i}\n"
+                          f"Average ransomware reward: {rw_avg_reward:.2f} \t Ransomware episodes: {len(rw_rewards)} \t Ransomware wins: {rw_wins}\n"
+                          f"Average APT reward: {apt_avg_reward:.2f} \t APT episodes: {len(apt_rewards)} \t APT wins: {apt_wins}\n"
+                          f"Average blue reward: {blue_avg_reward:.2f}")
+                    self.logger.debug(f"YT run  {self.uuid}: Episode {i + 1} complete")
 
             rw_avg_reward = np.average(rw_rewards)
             apt_avg_reward = np.average(apt_rewards)
