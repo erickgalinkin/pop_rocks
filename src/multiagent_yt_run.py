@@ -27,7 +27,6 @@ from multiagent_env import MultiAgentEnv
 
 _LOGGER = getLogger(__name__)
 DEVICE = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-WRITER = SummaryWriter(log_dir=PPO_TENSORBOARD_LOGS_DIR)
 SUPPORTED_TYPES = ["Ransomware", "APT"]
 
 class RolloutBuffer:
@@ -137,7 +136,7 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=3, lr_actor=0.0001, lr_critic=0.0003,
+    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=10, lr_actor=0.0002, lr_critic=0.0004,
                  gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -405,6 +404,7 @@ class MultiAgentYTRun(YawningTitanRun):
         self.logger.debug(f"YT run  {self.uuid}: Run initialised")
 
         self.output_dir = output_dir
+        self.writer = SummaryWriter(log_dir=f"{PPO_TENSORBOARD_LOGS_DIR}/{self.uuid}")
 
         # Automatically setup, train, and evaluate the agent if auto is True.
         if self.auto:
@@ -530,9 +530,9 @@ class MultiAgentYTRun(YawningTitanRun):
                     red_ep_reward += red_reward
                     blue_ep_reward += blue_reward
                     if done:
-                        WRITER.add_scalar("Red Episode Reward", red_ep_reward, i)
-                        WRITER.add_scalar("Blue Episode Reward", blue_ep_reward, i)
-                        WRITER.add_scalar("Episode Length", t, i)
+                        self.writer.add_scalar("Red Episode Reward", red_ep_reward, i)
+                        self.writer.add_scalar("Blue Episode Reward", blue_ep_reward, i)
+                        self.writer.add_scalar("Episode Length", t, i)
                         ep_length = t
                         episode_lengths.append(ep_length)
                         break
@@ -635,19 +635,19 @@ class MultiAgentYTRun(YawningTitanRun):
                         blue_rewards.append(blue_ep_reward)
                         if active_attacker.type == "Ransomware":
                             rw_rewards.append(red_ep_reward)
-                            WRITER.add_scalar("Ransomware Reward", red_ep_reward, i)
+                            self.writer.add_scalar("Ransomware Reward", red_ep_reward, i)
                         else:
-                            WRITER.add_scalar("APT Reward", red_ep_reward, i)
+                            self.writer.add_scalar("APT Reward", red_ep_reward, i)
                             apt_rewards.append(red_ep_reward)
-                        WRITER.add_scalar("Blue Episode Reward", blue_ep_reward, i)
-                        WRITER.add_scalar("Episode Length", t, i)
+                        self.writer.add_scalar("Blue Episode Reward", blue_ep_reward, i)
+                        self.writer.add_scalar("Episode Length", t, i)
                         ep_length = t
                         episode_lengths.append(ep_length)
                         break
                 if i > 0 and i % 64 == 0:
-                    if len(self.red_rw_agent.buffer) > 7:
+                    if len(self.red_rw_agent.buffer) >= 16:
                         self.red_rw_agent.update()
-                    if len(self.red_apt_agent.buffer) > 7:
+                    if len(self.red_apt_agent.buffer) >= 16:
                         self.red_apt_agent.update()
                     self.blue_agent.update()
 
@@ -698,7 +698,7 @@ class MultiAgentYTRun(YawningTitanRun):
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
-        model_path = f"{save_path}/multi_type/{self.uuid}"
+        model_path = f"{save_path}/{self.uuid}"
         if not os.path.exists(model_path):
             os.makedirs(model_path)
 
@@ -708,6 +708,7 @@ class MultiAgentYTRun(YawningTitanRun):
         self.blue_agent.save(blue_path)
         self.red_apt_agent.save(apt_path)
         self.red_rw_agent.save(rw_path)
+        print(f"Saved models to {model_path}")
 
 
 if __name__ == "__main__":
