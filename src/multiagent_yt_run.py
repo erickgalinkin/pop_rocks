@@ -348,6 +348,52 @@ class BayesHurwiczAgent(PPO):
                 self.mu_hat = np.random.beta(alpha, beta)
 
 
+class HierarchicalPPO(PPO):
+    def __init__(self, state_dim, action_dim, pretrained_ransomware, pretrained_apt, k_epochs=3, lr_actor=0.0001,
+                 lr_critic=0.0003, gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
+        self.latent_dim = 2  # We only need the 2 dimensions; outputs of the two subpolicy networks
+        self.rw = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
+        self.rw.load_state_dict(torch.load(pretrained_ransomware, map_location=lambda storage, loc: storage))
+        self.apt = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
+        self.apt.load_state_dict(torch.load(pretrained_apt, map_location=lambda storage, loc: storage))
+        super().__init__(state_dim=2 * action_dim, action_dim=self.latent_dim, k_epochs=k_epochs, lr_actor=lr_actor,
+                         lr_critic=lr_critic, gamma=gamma, eps_clip=eps_clip)
+
+    def select_action(self, state):
+        with torch.no_grad():
+            state = torch.FloatTensor(state).to(DEVICE)
+
+            # action_dim dimensional
+            rw_action_probs = self.rw.actor(state)
+            apt_action_probs = self.apt.actor(state)
+
+            # 1 dimensional
+            rw_state_val = self.rw.critic(state)
+            apt_state_val = self.apt.critic(state)
+
+            action_input = torch.cat([rw_action_probs, apt_action_probs], dim=0)
+            state_input = torch.cat([rw_state_val, apt_state_val], dim=0)
+
+            action_probs = self.policy_old.actor(action_input)
+            state_val = self.policy_old.critic(action_input)
+
+            dist = Categorical(action_probs)
+            action = dist.sample()
+            action_logprob = dist.log_prob(action)
+
+            self.buffer.states.append(action_input)
+            self.buffer.actions.append(action)
+            self.buffer.logprobs.append(action_logprob)
+            self.buffer.state_values.append(state_val)
+
+            if action.item() == 0:
+                action_to_take, _, _ = self.rw.act(state)
+            else:
+                action_to_take, _, _ = self.apt.act(state)
+
+            return action_to_take.item()
+
+
 class MultiAgentYTRun(YawningTitanRun):
 
     def __init__(self, network: Optional[Network] = None, game_mode: Optional[GameMode] = None,
@@ -420,6 +466,12 @@ class MultiAgentYTRun(YawningTitanRun):
         else:
             action_space = self.env.action_space.n
         agent = PPO(obs_space, action_space, attacker_type)
+        return agent
+
+    def _get_hippo(self, pretrained_rw, pretrained_apt) -> HierarchicalPPO:
+        obs_space = self.env.observation_space.shape[0]
+        action_space = self.env.action_space.n
+        agent = HierarchicalPPO(obs_space, action_space, pretrained_rw, pretrained_apt)
         return agent
 
     def setup(self, new=True, blue_ppo_path=None, red_ppo_path=None, red_agent_type="Ransomware",
@@ -566,7 +618,7 @@ class MultiAgentYTRun(YawningTitanRun):
                 f"Call .setup() on the instance of {self.__class__.__name__} to setup the run."
             )
 
-    def multi_type_setup(self, new=True):
+    def multi_type_setup(self, new=True, hierarchical=False, pretrained_rw=None, pretrained_apt=None):
         if self.output_dir:
             if isinstance(self.output_dir, str):
                 self.output_dir = pathlib.Path(self.output_dir)
@@ -601,7 +653,11 @@ class MultiAgentYTRun(YawningTitanRun):
         self.env.reset()
         self.logger.debug(f"YT run  {self.uuid}: GenericNetworkEnv reset")
         self.logger.debug(f"YT run  {self.uuid}: Instantiating agent")
-        self.blue_agent = self._get_new_ppo("blue")
+        if not hierarchical:
+            self.blue_agent = self._get_new_ppo("blue")
+        else:
+            assert pretrained_apt is not None and pretrained_rw is not None, "HiPPO requires pretrained networks"
+            self.blue_agent = self._get_hippo(pretrained_rw, pretrained_apt)
         self.red_rw_agent = self._get_new_ppo("red", "Ransomware")
         self.red_apt_agent = self._get_new_ppo("red", "APT")
         self.logger.debug(f"YT run  {self.uuid}: Agent instantiated")
@@ -692,6 +748,7 @@ class MultiAgentYTRun(YawningTitanRun):
         red_path = f"{model_path}/red.pth"
         self.blue_agent.save(blue_path)
         self.red_agent.save(red_path)
+        print(f"Saved models to {model_path}")
 
     def multi_type_save(self) -> Union[str, None]:
         save_path = "./saved_models"
