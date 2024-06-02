@@ -384,8 +384,8 @@ def multiagent_rewards(args: dict, security: float = 1, efficiency: float = 1) -
         "restore_node": 3,
         "make_node_safe": 2,
         "scan": 0.5,
-        "isolate": 5,
-        "connect": 0.5,
+        "isolate": 6,
+        "connect": 1,
         "do_nothing": 0,
         "add_deceptive_node": 3,
     }

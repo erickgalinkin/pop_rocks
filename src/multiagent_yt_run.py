@@ -136,7 +136,7 @@ class ActorCritic(nn.Module):
 
 
 class PPO:
-    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=10, lr_actor=0.0002, lr_critic=0.0004,
+    def __init__(self, state_dim, action_dim, attacker_type="Ransomware", k_epochs=5, lr_actor=0.0003, lr_critic=0.0005,
                  gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
         self.has_continuous_action_space = has_continuous_action_space
 
@@ -274,7 +274,7 @@ class PPO:
 
 class BayesHurwiczAgent(PPO):
     def __init__(self, state_dim, action_dim, p_hat_path, p_bar_path, p_ubar_path, attacker_type,
-                 k_epochs=5, lr_actor=0.0002, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
+                 k_epochs=5, lr_actor=0.0003, lr_critic=0.0005, gamma=0.99, eps_clip=0.2,
                  has_continuous_action_space=False, action_std_init=0.6):
         super().__init__(state_dim, action_dim, attacker_type, k_epochs, lr_actor, lr_critic, gamma, eps_clip,
                          has_continuous_action_space, action_std_init)
@@ -349,8 +349,8 @@ class BayesHurwiczAgent(PPO):
 
 
 class HierarchicalPPO(PPO):
-    def __init__(self, state_dim, action_dim, pretrained_ransomware, pretrained_apt, k_epochs=3, lr_actor=0.0001,
-                 lr_critic=0.0003, gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
+    def __init__(self, state_dim, action_dim, pretrained_ransomware, pretrained_apt, k_epochs=5, lr_actor=0.0003,
+                 lr_critic=0.0005, gamma=0.99, eps_clip=0.2, has_continuous_action_space=False, action_std_init=0.6):
         self.latent_dim = 2  # We only need the 2 dimensions; outputs of the two subpolicy networks
         self.rw = ActorCritic(state_dim, action_dim, has_continuous_action_space, action_std_init).to(DEVICE)
         self.rw.load_state_dict(torch.load(pretrained_ransomware, map_location=lambda storage, loc: storage))
