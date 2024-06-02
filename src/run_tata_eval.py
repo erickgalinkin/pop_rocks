@@ -1,8 +1,10 @@
-from itertools import repeat
+import json
+import copy
 from multiprocessing import Pool
 
 import numpy as np
 import torch
+import torch.multiprocessing as mp
 from yawning_titan.envs.generic.core.blue_interface import BlueInterface
 from yawning_titan.envs.generic.core.network_interface import NetworkInterface
 from yawning_titan.game_modes.game_mode_db import GameModeDB
@@ -12,7 +14,10 @@ from adaptive_red import AdaptiveRed
 from multiagent_env import MultiAgentEnv
 from multiagent_yt_run import PPO, HierarchicalPPO
 
-TRIALS = 1
+import warnings
+warnings.filterwarnings("ignore")
+
+TRIALS = 1000
 TIMESTEPS = 1000
 
 gdb = GameModeDB()
@@ -24,7 +29,7 @@ network_interface = NetworkInterface(GAME_MODE, NETWORK)
 # Create dummy env to establish env parameters
 RED = AdaptiveRed(network_interface)
 BLUE = BlueInterface(network_interface)
-ENV = MultiAgentEnv(RED, BLUE, network_interface)
+ENV = MultiAgentEnv(RED, BLUE, network_interface, print_metrics=False, print_per_ts_data=False)
 
 blue_state_dim = ENV.observation_space.shape[0]
 blue_action_dim = ENV.action_space.n
@@ -58,20 +63,22 @@ def evaluate(env, red_agent, blue_agent, red_type, name):
     blue_avg_reward = np.average(blue_rewards)
     avg_ep_length = np.average(episode_lengths)
 
-    print(f"Evaluation Statistics:\n"
-          f"Average episode length: {avg_ep_length:.0f}\n"
-          f"Average red reward: {red_avg_reward:.2f}\t"
-          f"Average blue reward: {blue_avg_reward:.2f}")
-
     return name, red_rewards, blue_rewards
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn')
     # 1k training runs; k_epochs=5, lr_actor=0.0003, lr_critic=0.0005
-    multi_type = "48a25525-5dfd-4333-a3c1-6585ac843fb7"
-    hierarchical = "92238a08-4f95-4317-b8b2-6b6c200dc458"
-    ransomware = "7f2699af-bdc1-49a2-ad98-eefc158cb3b6"
-    apt = "029841f2-d7e9-4b69-a1c0-c2ccfccf6f99"
+#    multi_type = "48a25525-5dfd-4333-a3c1-6585ac843fb7"
+#    hierarchical = "92238a08-4f95-4317-b8b2-6b6c200dc458"
+#    ransomware = "7f2699af-bdc1-49a2-ad98-eefc158cb3b6"
+#    apt = "029841f2-d7e9-4b69-a1c0-c2ccfccf6f99"
+
+# 3k training runs; k_epochs=5, lr_actor=0.0003, lr_critic=0.0005
+    multi_type = "5e216b55-2e81-4179-a6b3-f24d73e1cf3f"
+    hierarchical = "618a4f19-65bc-4555-876c-1e0620856a95"
+    ransomware = "6ec6fa23-1224-43f9-8a9f-5faa78c77b5e"
+    apt = "ef631654-1b31-4959-9127-17cf0b437ebf"
 
     mtrw_path = f"./saved_models/{multi_type}/ransomware.pth"
     mtapt_path = f"./saved_models/{multi_type}/apt.pth"
@@ -102,7 +109,6 @@ if __name__ == "__main__":
     rw_blue_agent.load(rw_defender_path)
     apt_blue_agent = PPO(blue_state_dim, blue_action_dim)
     apt_blue_agent.load(apt_defender_path)
-    envs = repeat(ENV)
     red_agents = [(mtrw_agent, "mtrw"), (mtapt_agent, "mtapt"), (rw_agent, "rw"), (apt_agent, "apt")]
     blue_agents = [(mt_blue_agent, "mt"), (hi_blue_agent, "hi"), (rw_blue_agent, "rw"), (apt_blue_agent, "apt")]
     args = list()
@@ -110,9 +116,13 @@ if __name__ == "__main__":
         for red_agent, red_name in red_agents:
             name = f"{blue_name}_{red_name}"
             red_type = "Ransomware" if "rw" in red_name else "APT"
-            args.append((envs, red_agent, blue_agent, red_type, name))
+            args.append((copy.deepcopy(ENV), copy.deepcopy(red_agent), copy.deepcopy(blue_agent), copy.deepcopy(red_type), copy.deepcopy(name)))
+    result_dict = dict()
 
     with Pool(processes=8) as pool:
-        results = pool.starmap_async(evaluate, args)
-        for r in results:
-            print(r.get())
+        results = pool.starmap(evaluate, args)
+        for name, red_rewards, blue_rewards in results:
+            result_dict[f"{name}_red_rewards"] = red_rewards
+            result_dict[f"{name}_blue_rewards"] = blue_rewards
+    with open("3k_results_test.json", "w") as f:
+        data = json.dump(result_dict, f)
